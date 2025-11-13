@@ -10,17 +10,17 @@ library(phyloseq)
 library(VennDiagram)
 
 # **Load Data**
-supernatant <- read.csv("data/supernatant_data.csv")
-intracellular <- read.csv("data/intracellular_data.csv")
-supernatant_abundance <- read.csv("data/Supernatant_Mutualproteins.csv")
-intracellular_abundance <- read.csv("data/Intrasample_MutualProteins.csv")
+supernatant <- read.csv("supernatant_data.csv")
+intracellular <- read.csv("intracellular_data.csv")
+supernatant_abundance <- read.csv("Supernatant_Mutualproteins.csv")
+intracellular_abundance <- read.csv("Intrasample_MutualProteins.csv")
 
 # Create protein_info table for mapping
 protein_info <- bind_rows(supernatant, intracellular) %>%
   distinct(From, Protein.names1, .keep_all = FALSE) %>%
   rename(Accession = From, ProteinName = Protein.names1)
 
-write.csv(protein_info, "results/tables/Combined_Prot_List.csv")
+write.csv(protein_info, "Combined_prot_list.csv")
 
 # **Get the Ids**
 supernatant_ids <- supernatant$From
@@ -28,29 +28,35 @@ intracellular_ids <- intracellular$From
 
 intersection <- intersect(supernatant_ids, intracellular_ids)
 
+output_dir <- "limma_outputs_vsn"
+
+# make sure the folder exists
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
 venn.plot <- venn.diagram(
   x = list(
-    Supernatant = supernatant_ids,
+    Supernatant   = supernatant_ids,
     Intracellular = intracellular_ids
   ),
-  filename = NULL,
-  fill = c("#298c8c", "#f1a226"),
-  alpha = 0.6,
-  scaled = FALSE,                
-  cex = 1.2,                     # Font size of counts
-  cat.cex = 1.0,                 # Font size of group names
+  filename    = NULL,
+  fill        = c("#298c8c", "#f1a226"),
+  alpha       = 0.6,
+  scaled      = FALSE,
+  cex         = 1.2,
+  cat.cex     = 1.0,
   cat.fontface = "bold",
-  fontfamily = "sans",
+  fontfamily   = "sans",
   cat.fontfamily = "sans",
-  cat.pos = c(30, -30), 
-  cat.dist = c(0.06, 0.06),
-  cat.just = list(c(0.5, 1), c(0.5, 1)),
-  margin = 0.05
+  cat.pos     = c(30, -30),
+  cat.dist    = c(0.06, 0.06),
+  cat.just    = list(c(0.5, 1), c(0.5, 1)),
+  margin      = 0.05
 )
 
+png(file.path(output_dir, "venn.png"), width = 2000, height = 2000, res = 300)
 grid.newpage()
 grid.draw(venn.plot)
-
+dev.off()
 
 supernatant_intersection <- supernatant |>
   filter(From %in% intersection)
@@ -97,7 +103,7 @@ colnames(intersection_abundance) <- c("Supernatant1", "Supernatant2",
 # Function to detect metadata columns dynamically
 detect_metadata_column <- function(metadata, condition_names, sample_names) {
   # Convert to standard dataframe if metadata is a tibble
-  metadata <- as.data.frame(metadata)
+  metadata <- as.data.frame(metadata)  # Ensures proper renaming
   
   # Print available columns
   message("Checking metadata for valid columns...")
@@ -146,7 +152,7 @@ validate_condition_levels <- function(condition) {
   }
   if (length(levels(condition)) > 2) {
     stop(paste("ERROR: More than two condition levels detected:", paste(levels(condition), collapse=", "), 
-               "\nUse run_limma_voom_multiclass() instead."))
+               "\nUse run_corncob_multiclass() instead."))
   }
   
   return(condition)
@@ -311,7 +317,7 @@ generate_heatmap <- function(count_matrix, sig_genes, metadata, condition_col, o
   output_file <- file.path(output_path, paste0("heatmap_", method_name, "_", gsub(" ", "_", comparison_label), ".png"))
   
   # **Generate heatmap**
-  png(output_file, width = 2400, height = 1200, res = 300)
+  png(output_file, width = 2400, height = 1400, res = 300)
   draw(Heatmap(
     sig_gene_matrix,
     name = "Expression",
@@ -349,7 +355,7 @@ run_limma_voom_binary <- function(count_matrix, metadata, condition_col, output_
   
   # **Detect metadata columns**
   metadata_info <- detect_metadata_column(metadata, 
-                                          condition_names = c("condition", "Group", "class", "Condition", "group", "Class"),
+                                          condition_names = c("Condition", "group", "Class"),
                                           sample_names = c("Run", "run", "sampleid", "SampleID", "sample", "sample_id", "ID"))
   
   metadata <- metadata_info$metadata
@@ -371,11 +377,11 @@ run_limma_voom_binary <- function(count_matrix, metadata, condition_col, output_
   group <- factor(metadata_filtered[[condition_col]])
   design <- model.matrix(~ group)
   
-  # **Apply Voom Transformation**
-  v <- voom(count_matrix, design)
+  # # **Apply Voom Transformation**
+  # v <- voom(count_matrix, design)
   
   # **Fit Model & Perform Differential Expression**
-  fit <- lmFit(v, design)
+  fit <- lmFit(count_matrix, design)
   fit <- eBayes(fit)
   
   # **Extract Results**
@@ -397,11 +403,11 @@ run_limma_voom_binary <- function(count_matrix, metadata, condition_col, output_
     dplyr::rename(log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val)
   
   # **Fix: Use condition names in the filename**
-  comparison_label <- paste0(levels(group)[2], "_vs_", levels(group)[1])
-  method_name <- "limma_voom"
+  comparison_label <- paste(levels(group)[2], "vs", levels(group)[1])
+  method_name <- "limma"
   
   # **Save results**
-  write.csv(results_limma, file = file.path(output_dir, paste0("limma_voom", comparison_label, ".csv")), row.names = FALSE)
+  write.csv(results_limma, file = file.path(output_dir, paste0("limma_voom_binary_results_", comparison_label, ".csv")), row.names = FALSE)
   
   # **Create Directories for Plots**
   heatmap_output_dir <- file.path(output_dir, "heatmaps")
@@ -419,13 +425,13 @@ run_limma_voom_binary <- function(count_matrix, metadata, condition_col, output_
   }
   
   if (nrow(sig_genes) > 1) {
-    generate_heatmap(v$E, sig_genes, metadata_filtered, condition_col, heatmap_output_dir, comparison_label, method_name)
+    generate_heatmap(count_matrix, sig_genes, metadata_filtered, condition_col, heatmap_output_dir, comparison_label, method_name)
   } else {
     message("Skipping heatmap - Not enough significant genes.")
   }
 }
 
-run_limma_voom_binary(count_matrix = intersection_abundance, metadata = metadata, condition_col = "group", output_dir = "results/limma_results")
+run_limma_voom_binary(count_matrix = intersection_abundance, metadata = metadata, condition_col = "group", output_dir = "limma_outputs_vsn")
 
 
 
